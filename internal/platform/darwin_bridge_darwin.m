@@ -3,6 +3,7 @@
 #import <WebKit/WebKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <UserNotifications/UserNotifications.h>
+#include <unistd.h>
 #import "darwin_bridge_darwin.h"
 
 static void runOnMainSync(dispatch_block_t block) {
@@ -77,6 +78,49 @@ static uint32_t carbonKeyCodeForName(const char *keyName) {
     }
 }
 
+// Physical ANSI keyCode -> lowercase ASCII so shortcuts work regardless of Korean/English IME
+static NSString *physicalKeyCharForEvent(NSEvent *event) {
+    switch (event.keyCode) {
+        case kVK_ANSI_0: case kVK_ANSI_Keypad0: return @"0";
+        case kVK_ANSI_1: case kVK_ANSI_Keypad1: return @"1";
+        case kVK_ANSI_2: case kVK_ANSI_Keypad2: return @"2";
+        case kVK_ANSI_3: case kVK_ANSI_Keypad3: return @"3";
+        case kVK_ANSI_4: case kVK_ANSI_Keypad4: return @"4";
+        case kVK_ANSI_5: case kVK_ANSI_Keypad5: return @"5";
+        case kVK_ANSI_6: case kVK_ANSI_Keypad6: return @"6";
+        case kVK_ANSI_7: case kVK_ANSI_Keypad7: return @"7";
+        case kVK_ANSI_8: case kVK_ANSI_Keypad8: return @"8";
+        case kVK_ANSI_9: case kVK_ANSI_Keypad9: return @"9";
+        case kVK_ANSI_A: return @"a";
+        case kVK_ANSI_B: return @"b";
+        case kVK_ANSI_C: return @"c";
+        case kVK_ANSI_D: return @"d";
+        case kVK_ANSI_E: return @"e";
+        case kVK_ANSI_F: return @"f";
+        case kVK_ANSI_G: return @"g";
+        case kVK_ANSI_H: return @"h";
+        case kVK_ANSI_I: return @"i";
+        case kVK_ANSI_J: return @"j";
+        case kVK_ANSI_K: return @"k";
+        case kVK_ANSI_L: return @"l";
+        case kVK_ANSI_M: return @"m";
+        case kVK_ANSI_N: return @"n";
+        case kVK_ANSI_O: return @"o";
+        case kVK_ANSI_P: return @"p";
+        case kVK_ANSI_Q: return @"q";
+        case kVK_ANSI_R: return @"r";
+        case kVK_ANSI_S: return @"s";
+        case kVK_ANSI_T: return @"t";
+        case kVK_ANSI_U: return @"u";
+        case kVK_ANSI_V: return @"v";
+        case kVK_ANSI_W: return @"w";
+        case kVK_ANSI_X: return @"x";
+        case kVK_ANSI_Y: return @"y";
+        case kVK_ANSI_Z: return @"z";
+        default: return nil;
+    }
+}
+
 static OSStatus hotKeyHandler(EventHandlerCallRef nextHandler, EventRef theEvent, void *userData) {
     (void)nextHandler;
     (void)theEvent;
@@ -85,15 +129,59 @@ static OSStatus hotKeyHandler(EventHandlerCallRef nextHandler, EventRef theEvent
     return noErr;
 }
 
+@interface UCPopupEntry : NSObject
+@property (nonatomic, assign) int tag;
+@property (nonatomic, copy) NSString *title;
+@property (nonatomic, copy) NSString *keyEquiv;
+@property (nonatomic, assign) BOOL enabled;
+@property (nonatomic, assign) BOOL isSeparator;
+@property (nonatomic, strong) NSImage *thumb;
+@property (nonatomic, strong) NSMutableArray<UCPopupEntry *> *children;
+- (BOOL)isSubmenu;
+@end
+
+@implementation UCPopupEntry
+- (BOOL)isSubmenu {
+    return self.children != nil;
+}
+@end
+
+@class UCPopupPanel;
+@class UCAppDelegate;
+static UCAppDelegate *gDelegate = nil;
+
+@interface UCPopupMenuView : NSView
+@property (nonatomic, weak) UCPopupPanel *ownerPanel;
+@property (nonatomic, strong) NSArray<UCPopupEntry *> *entries;
+@property (nonatomic, strong) NSMutableArray<NSValue *> *rowRects;
+@property (nonatomic, assign) NSInteger highlightedIndex;
+@property (nonatomic, assign) CGFloat preferredWidth;
+@property (nonatomic, assign) CGFloat preferredHeight;
+@property (nonatomic, strong) NSTrackingArea *trackingArea;
+- (instancetype)initWithEntries:(NSArray<UCPopupEntry *> *)entries owner:(UCPopupPanel *)owner;
+- (void)moveHighlightBy:(NSInteger)delta;
+- (NSRect)rectForRow:(NSInteger)idx;
+@end
+
+@interface UCPopupPanel : NSPanel
+@property (nonatomic, assign) NSInteger levelIndex;
+@property (nonatomic, strong) UCPopupMenuView *menuView;
+@property (nonatomic, strong) NSScrollView *scrollView;
+@end
+
 @interface UCAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate>
 @property (nonatomic, strong) NSStatusItem *statusItem;
 @property (nonatomic, strong) NSTimer *pbTimer;
 @property (nonatomic, assign) NSInteger lastChangeCount;
-@property (nonatomic, strong) NSRunningApplication *previousApp;
+@property (nonatomic, strong) NSRunningApplication *lastExternalApp;
 @property (nonatomic, strong) NSWindow *viewerWindow;
 @property (nonatomic, strong) WKWebView *webView;
-@property (nonatomic, strong) NSMenu *popupMenu;
-@property (nonatomic, strong) NSMutableArray<NSMenu *> *menuStack;
+
+@property (nonatomic, strong) NSMutableArray<UCPopupEntry *> *rootEntries;
+@property (nonatomic, strong) NSMutableArray<NSMutableArray<UCPopupEntry *> *> *entryBuildStack;
+@property (nonatomic, strong) NSMutableArray<UCPopupPanel *> *panelStack;
+@property (nonatomic, strong) id globalClickMonitor;
+@property (nonatomic, assign) BOOL axPromptedOnce;
 
 @property (nonatomic, assign) int onlinePeers;
 @property (nonatomic, assign) int totalPeers;
@@ -103,9 +191,330 @@ static OSStatus hotKeyHandler(EventHandlerCallRef nextHandler, EventRef theEvent
 
 @property (nonatomic, assign) EventHotKeyRef hotKeyRef;
 @property (nonatomic, assign) EventHandlerRef hotKeyHandlerRef;
+
+- (void)dismissAllPopupsAndRestoreFocus:(BOOL)restore;
+- (void)openSubmenuForEntry:(UCPopupEntry *)entry atRowRect:(NSRect)rowScreenRect fromLevel:(NSInteger)level;
+- (void)closePanelsAboveLevel:(NSInteger)level;
+- (void)triggerLeafEntry:(UCPopupEntry *)entry;
 @end
 
-static UCAppDelegate *gDelegate = nil;
+static NSString *stripShortcutPrefix(NSString *title, NSString *keyEquiv) {
+    if (!title) return @"";
+    if (keyEquiv.length > 0) {
+        NSString *prefix = [NSString stringWithFormat:@"%@  ", [keyEquiv uppercaseString]];
+        if ([title hasPrefix:prefix]) {
+            return [title substringFromIndex:prefix.length];
+        }
+    }
+    return title;
+}
+
+@implementation UCPopupMenuView
+
+- (BOOL)isFlipped { return YES; }
+
+- (instancetype)initWithEntries:(NSArray<UCPopupEntry *> *)entries owner:(UCPopupPanel *)owner {
+    self = [super initWithFrame:NSZeroRect];
+    if (self) {
+        _entries = entries ?: @[];
+        _ownerPanel = owner;
+        _highlightedIndex = -1;
+        _rowRects = [NSMutableArray arrayWithCapacity:_entries.count];
+
+        NSDictionary *titleAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightRegular]};
+        CGFloat maxTitleW = 140;
+        BOOL hasAnyKey = NO;
+        BOOL hasAnyThumb = NO;
+        BOOL hasAnySub = NO;
+        for (UCPopupEntry *e in _entries) {
+            if (e.isSeparator) continue;
+            if (e.keyEquiv.length > 0) hasAnyKey = YES;
+            if (e.thumb) hasAnyThumb = YES;
+            if (e.isSubmenu) hasAnySub = YES;
+            NSString *disp = stripShortcutPrefix(e.title, e.keyEquiv);
+            NSSize sz = [disp sizeWithAttributes:titleAttrs];
+            if (sz.width > maxTitleW) maxTitleW = sz.width;
+        }
+        if (maxTitleW > 300) maxTitleW = 300;
+
+        CGFloat w = 14 + (hasAnyKey ? 22 : 0) + (hasAnyThumb ? 26 : 0) + maxTitleW + (hasAnySub ? 22 : 0) + 16;
+        if (w < 240) w = 240;
+        if (w > 430) w = 430;
+        _preferredWidth = w;
+
+        CGFloat y = 6;
+        for (UCPopupEntry *e in _entries) {
+            CGFloat rh = e.isSeparator ? 11.0 : 28.0;
+            [_rowRects addObject:[NSValue valueWithRect:NSMakeRect(6, y, w - 12, rh)]];
+            y += rh;
+        }
+        _preferredHeight = y + 6;
+        self.frame = NSMakeRect(0, 0, _preferredWidth, _preferredHeight);
+
+        for (NSInteger i = 0; i < (NSInteger)_entries.count; i++) {
+            UCPopupEntry *e = _entries[i];
+            if (!e.isSeparator && e.enabled) {
+                _highlightedIndex = i;
+                break;
+            }
+        }
+    }
+    return self;
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (self.trackingArea) {
+        [self removeTrackingArea:self.trackingArea];
+    }
+    self.trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
+                                                     options:(NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect)
+                                                       owner:self
+                                                    userInfo:nil];
+    [self addTrackingArea:self.trackingArea];
+}
+
+- (NSRect)rectForRow:(NSInteger)idx {
+    if (idx < 0 || idx >= (NSInteger)self.rowRects.count) return NSZeroRect;
+    return [self.rowRects[idx] rectValue];
+}
+
+- (NSInteger)rowAtPoint:(NSPoint)pt {
+    for (NSInteger i = 0; i < (NSInteger)self.rowRects.count; i++) {
+        if (NSPointInRect(pt, [self.rowRects[i] rectValue])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+- (void)moveHighlightBy:(NSInteger)delta {
+    NSInteger count = (NSInteger)self.entries.count;
+    if (count == 0) return;
+    NSInteger idx = self.highlightedIndex;
+    for (NSInteger step = 0; step < count; step++) {
+        if (idx < 0) {
+            idx = (delta > 0) ? 0 : count - 1;
+        } else {
+            idx = (idx + delta + count) % count;
+        }
+        UCPopupEntry *e = self.entries[idx];
+        if (!e.isSeparator && e.enabled) {
+            self.highlightedIndex = idx;
+            [self scrollRectToVisible:[self rectForRow:idx]];
+            [self setNeedsDisplay:YES];
+            return;
+        }
+    }
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    NSPoint pt = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger idx = [self rowAtPoint:pt];
+    if (idx != self.highlightedIndex) {
+        if (idx >= 0) {
+            UCPopupEntry *e = self.entries[idx];
+            if (!e.isSeparator && e.enabled) {
+                self.highlightedIndex = idx;
+                [self setNeedsDisplay:YES];
+                if (e.isSubmenu) {
+                    NSRect r = [self rectForRow:idx];
+                    NSRect winR = [self convertRect:r toView:nil];
+                    NSRect scrR = [self.ownerPanel convertRectToScreen:winR];
+                    [gDelegate openSubmenuForEntry:e atRowRect:scrR fromLevel:self.ownerPanel.levelIndex];
+                } else {
+                    [gDelegate closePanelsAboveLevel:self.ownerPanel.levelIndex];
+                }
+            }
+        }
+    }
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    (void)event;
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    NSPoint pt = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger idx = [self rowAtPoint:pt];
+    if (idx < 0 || idx >= (NSInteger)self.entries.count) return;
+    UCPopupEntry *e = self.entries[idx];
+    if (e.isSeparator || !e.enabled) return;
+
+    if (e.isSubmenu) {
+        self.highlightedIndex = idx;
+        [self setNeedsDisplay:YES];
+        NSRect r = [self rectForRow:idx];
+        NSRect winR = [self convertRect:r toView:nil];
+        NSRect scrR = [self.ownerPanel convertRectToScreen:winR];
+        [gDelegate openSubmenuForEntry:e atRowRect:scrR fromLevel:self.ownerPanel.levelIndex];
+    } else {
+        [gDelegate triggerLeafEntry:e];
+    }
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    for (NSInteger i = 0; i < (NSInteger)self.entries.count; i++) {
+        UCPopupEntry *e = self.entries[i];
+        NSRect r = [self.rowRects[i] rectValue];
+        if (e.isSeparator) {
+            [[NSColor separatorColor] setFill];
+            NSRectFill(NSMakeRect(r.origin.x + 6, NSMidY(r), r.size.width - 12, 1));
+            continue;
+        }
+
+        BOOL active = (i == self.highlightedIndex && e.enabled);
+        if (active) {
+            [[NSColor selectedContentBackgroundColor] setFill];
+            [[NSBezierPath bezierPathWithRoundedRect:r xRadius:6 yRadius:6] fill];
+        }
+
+        NSColor *textColor = active
+            ? [NSColor alternateSelectedControlTextColor]
+            : (e.enabled ? [NSColor labelColor] : [NSColor disabledControlTextColor]);
+        NSColor *keyColor = active
+            ? [[NSColor alternateSelectedControlTextColor] colorWithAlphaComponent:0.85]
+            : [NSColor secondaryLabelColor];
+
+        CGFloat x = r.origin.x + 8;
+        if (e.keyEquiv.length > 0) {
+            NSString *kStr = [e.keyEquiv uppercaseString];
+            NSDictionary *kAttrs = @{
+                NSFontAttributeName: [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightSemibold],
+                NSForegroundColorAttributeName: keyColor
+            };
+            NSSize kSz = [kStr sizeWithAttributes:kAttrs];
+            [kStr drawAtPoint:NSMakePoint(x + (14 - kSz.width) * 0.5, NSMidY(r) - kSz.height * 0.5) withAttributes:kAttrs];
+            x += 20;
+        }
+
+        if (e.thumb) {
+            NSRect thumbRect = NSMakeRect(x, NSMidY(r) - 10, 20, 20);
+            [NSGraphicsContext saveGraphicsState];
+            [[NSBezierPath bezierPathWithRoundedRect:thumbRect xRadius:3 yRadius:3] addClip];
+            [e.thumb drawInRect:thumbRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0 respectFlipped:YES hints:nil];
+            [NSGraphicsContext restoreGraphicsState];
+            x += 26;
+        }
+
+        CGFloat rightPad = e.isSubmenu ? 22.0 : 8.0;
+        CGFloat availW = NSMaxX(r) - rightPad - x;
+        if (availW < 20) availW = 20;
+
+        NSString *disp = stripShortcutPrefix(e.title, e.keyEquiv);
+        NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+        ps.lineBreakMode = NSLineBreakByTruncatingTail;
+        NSDictionary *tAttrs = @{
+            NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightRegular],
+            NSForegroundColorAttributeName: textColor,
+            NSParagraphStyleAttributeName: ps
+        };
+        NSSize tSz = [disp sizeWithAttributes:tAttrs];
+        [disp drawInRect:NSMakeRect(x, NSMidY(r) - tSz.height * 0.5, availW, tSz.height + 2) withAttributes:tAttrs];
+
+        if (e.isSubmenu) {
+            NSString *arrow = @"▸";
+            NSDictionary *aAttrs = @{
+                NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],
+                NSForegroundColorAttributeName: keyColor
+            };
+            NSSize aSz = [arrow sizeWithAttributes:aAttrs];
+            [arrow drawAtPoint:NSMakePoint(NSMaxX(r) - 15, NSMidY(r) - aSz.height * 0.5) withAttributes:aAttrs];
+        }
+    }
+}
+
+@end
+
+@implementation UCPopupPanel
+
+- (BOOL)canBecomeKeyWindow { return YES; }
+- (BOOL)canBecomeMainWindow { return NO; }
+- (BOOL)acceptsFirstResponder { return YES; }
+
+- (void)keyDown:(NSEvent *)event {
+    if (event.keyCode == kVK_Escape) {
+        [gDelegate dismissAllPopupsAndRestoreFocus:YES];
+        return;
+    }
+    if (event.keyCode == kVK_UpArrow) {
+        [self.menuView moveHighlightBy:-1];
+        return;
+    }
+    if (event.keyCode == kVK_DownArrow) {
+        [self.menuView moveHighlightBy:1];
+        return;
+    }
+    if (event.keyCode == kVK_LeftArrow || event.keyCode == kVK_Delete) {
+        if (self.levelIndex > 0) {
+            [gDelegate closePanelsAboveLevel:self.levelIndex - 1];
+            if (gDelegate.panelStack.lastObject) {
+                [gDelegate.panelStack.lastObject makeKeyAndOrderFront:nil];
+            }
+        }
+        return;
+    }
+    if (event.keyCode == kVK_RightArrow) {
+        NSInteger hi = self.menuView.highlightedIndex;
+        if (hi >= 0 && hi < (NSInteger)self.menuView.entries.count) {
+            UCPopupEntry *e = self.menuView.entries[hi];
+            if (e.enabled && e.isSubmenu) {
+                NSRect r = [self.menuView rectForRow:hi];
+                NSRect winR = [self.menuView convertRect:r toView:nil];
+                NSRect scrR = [self convertRectToScreen:winR];
+                [gDelegate openSubmenuForEntry:e atRowRect:scrR fromLevel:self.levelIndex];
+            }
+        }
+        return;
+    }
+    if (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter) {
+        NSInteger hi = self.menuView.highlightedIndex;
+        if (hi >= 0 && hi < (NSInteger)self.menuView.entries.count) {
+            UCPopupEntry *e = self.menuView.entries[hi];
+            if (!e.isSeparator && e.enabled) {
+                if (e.isSubmenu) {
+                    NSRect r = [self.menuView rectForRow:hi];
+                    NSRect winR = [self.menuView convertRect:r toView:nil];
+                    NSRect scrR = [self convertRectToScreen:winR];
+                    [gDelegate openSubmenuForEntry:e atRowRect:scrR fromLevel:self.levelIndex];
+                } else {
+                    [gDelegate triggerLeafEntry:e];
+                }
+            }
+        }
+        return;
+    }
+
+    NSEventModifierFlags badMods = NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption;
+    if ((event.modifierFlags & badMods) != 0) {
+        return;
+    }
+
+    NSString *phys = physicalKeyCharForEvent(event);
+    if (!phys) return;
+
+    // Match shortcut ONLY within THIS active panel's entries
+    NSArray<UCPopupEntry *> *entries = self.menuView.entries;
+    for (NSInteger i = 0; i < (NSInteger)entries.count; i++) {
+        UCPopupEntry *e = entries[i];
+        if (!e.isSeparator && e.enabled && e.keyEquiv.length > 0 && [e.keyEquiv caseInsensitiveCompare:phys] == NSOrderedSame) {
+            if (e.isSubmenu) {
+                self.menuView.highlightedIndex = i;
+                [self.menuView setNeedsDisplay:YES];
+                NSRect r = [self.menuView rectForRow:i];
+                NSRect winR = [self.menuView convertRect:r toView:nil];
+                NSRect scrR = [self convertRectToScreen:winR];
+                [gDelegate openSubmenuForEntry:e atRowRect:scrR fromLevel:self.levelIndex];
+            } else {
+                [gDelegate triggerLeafEntry:e];
+            }
+            return;
+        }
+    }
+}
+
+@end
 
 @implementation UCAppDelegate
 
@@ -114,9 +523,20 @@ static UCAppDelegate *gDelegate = nil;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [self setupMainMenu];
 
-    self.menuStack = [NSMutableArray array];
+    self.entryBuildStack = [NSMutableArray array];
+    self.panelStack = [NSMutableArray array];
     self.hotkeyLabel = @"Option+V";
     self.universal = YES;
+
+    pid_t selfPID = [[NSProcessInfo processInfo] processIdentifier];
+    NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    if (front && front.processIdentifier != selfPID) {
+        self.lastExternalApp = front;
+    }
+    [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self
+                                                           selector:@selector(onWorkspaceAppActivated:)
+                                                               name:NSWorkspaceDidActivateApplicationNotification
+                                                             object:nil];
 
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
     self.statusItem.button.image = [self makeTrayImage];
@@ -131,6 +551,15 @@ static UCAppDelegate *gDelegate = nil;
                                                    repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:self.pbTimer forMode:NSRunLoopCommonModes];
     goOnReady();
+}
+
+- (void)onWorkspaceAppActivated:(NSNotification *)note {
+    NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+    if (!app) return;
+    pid_t selfPID = [[NSProcessInfo processInfo] processIdentifier];
+    if (app.processIdentifier != selfPID) {
+        self.lastExternalApp = app;
+    }
 }
 
 - (NSImage *)makeTrayImage {
@@ -237,7 +666,6 @@ static UCAppDelegate *gDelegate = nil;
     NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
     const char *fgCStr = front.bundleIdentifier ? [front.bundleIdentifier UTF8String] : "";
 
-    // Priority 1: File URLs
     NSDictionary *fileOpts = @{NSPasteboardURLReadingFileURLsOnlyKey: @YES};
     NSArray<NSURL *> *urls = [pb readObjectsForClasses:@[[NSURL class]] options:fileOpts];
     if (urls.count > 0) {
@@ -254,7 +682,6 @@ static UCAppDelegate *gDelegate = nil;
         }
     }
 
-    // Priority 2: PNG / TIFF Image
     NSData *pngData = [pb dataForType:NSPasteboardTypePNG];
     if (!pngData) {
         NSData *tiffData = [pb dataForType:NSPasteboardTypeTIFF];
@@ -270,15 +697,116 @@ static UCAppDelegate *gDelegate = nil;
         return;
     }
 
-    // Priority 3: String
     NSString *str = [pb stringForType:NSPasteboardTypeString];
     if (str.length > 0) {
         goOnClipboardChange(1, (char *)[str UTF8String], NULL, 0, NULL, (char *)fgCStr, sensitive);
     }
 }
 
-- (void)onPopupItemSelected:(NSMenuItem *)sender {
-    int tag = (int)sender.tag;
+- (UCPopupPanel *)createPanelWithEntries:(NSArray<UCPopupEntry *> *)entries level:(NSInteger)level anchor:(NSPoint)anchor parentRect:(NSRect)parentRect {
+    UCPopupPanel *panel = [[UCPopupPanel alloc] initWithContentRect:NSMakeRect(0, 0, 280, 200)
+                                                          styleMask:NSWindowStyleMaskBorderless
+                                                            backing:NSBackingStoreBuffered
+                                                              defer:NO];
+    panel.level = NSStatusWindowLevel + level;
+    panel.opaque = NO;
+    panel.backgroundColor = [NSColor clearColor];
+    panel.hasShadow = YES;
+    panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    panel.levelIndex = level;
+
+    UCPopupMenuView *mv = [[UCPopupMenuView alloc] initWithEntries:entries owner:panel];
+    panel.menuView = mv;
+
+    NSScreen *screen = [NSScreen mainScreen];
+    for (NSScreen *sc in [NSScreen screens]) {
+        if (NSPointInRect(anchor, sc.frame)) {
+            screen = sc;
+            break;
+        }
+    }
+    NSRect vis = screen ? screen.visibleFrame : NSMakeRect(0, 0, 1440, 900);
+    CGFloat maxH = vis.size.height - 24;
+    CGFloat pw = mv.preferredWidth;
+    CGFloat ph = mv.preferredHeight;
+    if (ph > maxH) ph = maxH;
+
+    NSVisualEffectView *vev = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, pw, ph)];
+    vev.material = NSVisualEffectMaterialMenu;
+    vev.state = NSVisualEffectStateActive;
+    vev.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    vev.wantsLayer = YES;
+    vev.layer.cornerRadius = 10.0;
+    vev.layer.masksToBounds = YES;
+    vev.layer.borderWidth = 0.5;
+    vev.layer.borderColor = [[NSColor separatorColor] CGColor];
+
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, pw, ph)];
+    sv.drawsBackground = NO;
+    sv.hasVerticalScroller = (mv.preferredHeight > ph);
+    sv.borderType = NSNoBorder;
+    sv.documentView = mv;
+    panel.scrollView = sv;
+    [vev addSubview:sv];
+    panel.contentView = vev;
+
+    CGFloat x, y;
+    if (level == 0) {
+        x = anchor.x;
+        y = anchor.y - ph;
+    } else {
+        x = NSMaxX(parentRect) - 2;
+        if (x + pw > NSMaxX(vis)) {
+            x = NSMinX(parentRect) - pw + 2;
+        }
+        y = NSMaxY(parentRect) - ph + 6;
+    }
+    if (x + pw > NSMaxX(vis)) x = NSMaxX(vis) - pw - 6;
+    if (x < NSMinX(vis)) x = NSMinX(vis) + 6;
+    if (y < NSMinY(vis)) y = NSMinY(vis) + 6;
+    if (y + ph > NSMaxY(vis)) y = NSMaxY(vis) - ph - 6;
+
+    [panel setFrame:NSMakeRect(x, y, pw, ph) display:YES];
+    return panel;
+}
+
+- (void)closePanelsAboveLevel:(NSInteger)level {
+    while ((NSInteger)self.panelStack.count > level + 1) {
+        UCPopupPanel *p = self.panelStack.lastObject;
+        [self.panelStack removeLastObject];
+        [p orderOut:nil];
+    }
+}
+
+- (void)openSubmenuForEntry:(UCPopupEntry *)entry atRowRect:(NSRect)rowScreenRect fromLevel:(NSInteger)level {
+    [self closePanelsAboveLevel:level];
+    if (!entry.children || entry.children.count == 0) return;
+
+    UCPopupPanel *sub = [self createPanelWithEntries:entry.children
+                                               level:level + 1
+                                              anchor:rowScreenRect.origin
+                                          parentRect:rowScreenRect];
+    [self.panelStack addObject:sub];
+    [sub makeKeyAndOrderFront:nil];
+}
+
+- (void)dismissAllPopupsAndRestoreFocus:(BOOL)restore {
+    if (self.globalClickMonitor) {
+        [NSEvent removeMonitor:self.globalClickMonitor];
+        self.globalClickMonitor = nil;
+    }
+    for (UCPopupPanel *p in self.panelStack) {
+        [p orderOut:nil];
+    }
+    [self.panelStack removeAllObjects];
+    if (restore && self.lastExternalApp && !self.lastExternalApp.terminated) {
+        [self.lastExternalApp activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    }
+}
+
+- (void)triggerLeafEntry:(UCPopupEntry *)entry {
+    int tag = entry.tag;
+    [self dismissAllPopupsAndRestoreFocus:YES];
     goOnPopupTag(tag);
 }
 
@@ -492,10 +1020,9 @@ void uc_write_clipboard_files(const char **paths, int count) {
 
 void uc_popup_reset(void) {
     runOnMainSync(^{
-        gDelegate.popupMenu = [[NSMenu alloc] initWithTitle:@"UnionClipboard"];
-        [gDelegate.popupMenu setAutoenablesItems:NO];
-        [gDelegate.menuStack removeAllObjects];
-        [gDelegate.menuStack addObject:gDelegate.popupMenu];
+        gDelegate.rootEntries = [NSMutableArray array];
+        [gDelegate.entryBuildStack removeAllObjects];
+        [gDelegate.entryBuildStack addObject:gDelegate.rootEntries];
     });
 }
 
@@ -504,29 +1031,25 @@ void uc_popup_add_item(int tag, const char *title, const void *thumbPNG, int thu
     NSString *nsKey = keyEquiv ? [NSString stringWithUTF8String:keyEquiv] : @"";
     NSData *imgData = (thumbPNG && thumbLen > 0) ? [NSData dataWithBytes:thumbPNG length:(NSUInteger)thumbLen] : nil;
     runOnMainSync(^{
-        NSMenu *cur = gDelegate.menuStack.lastObject ?: gDelegate.popupMenu;
-        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:nsTitle
-                                                      action:(enabled ? @selector(onPopupItemSelected:) : nil)
-                                               keyEquivalent:nsKey];
-        item.keyEquivalentModifierMask = 0;
-        item.target = gDelegate;
-        item.tag = tag;
-        item.enabled = enabled;
+        NSMutableArray<UCPopupEntry *> *cur = gDelegate.entryBuildStack.lastObject ?: gDelegate.rootEntries;
+        UCPopupEntry *e = [[UCPopupEntry alloc] init];
+        e.tag = tag;
+        e.title = nsTitle;
+        e.keyEquiv = nsKey;
+        e.enabled = enabled;
         if (imgData) {
-            NSImage *img = [[NSImage alloc] initWithData:imgData];
-            if (img) {
-                [img setSize:NSMakeSize(22, 22)];
-                item.image = img;
-            }
+            e.thumb = [[NSImage alloc] initWithData:imgData];
         }
-        [cur addItem:item];
+        [cur addObject:e];
     });
 }
 
 void uc_popup_add_separator(void) {
     runOnMainSync(^{
-        NSMenu *cur = gDelegate.menuStack.lastObject ?: gDelegate.popupMenu;
-        [cur addItem:[NSMenuItem separatorItem]];
+        NSMutableArray<UCPopupEntry *> *cur = gDelegate.entryBuildStack.lastObject ?: gDelegate.rootEntries;
+        UCPopupEntry *e = [[UCPopupEntry alloc] init];
+        e.isSeparator = YES;
+        [cur addObject:e];
     });
 }
 
@@ -534,52 +1057,108 @@ void uc_popup_begin_submenu(const char *title, const char *keyEquiv) {
     NSString *nsTitle = title ? [NSString stringWithUTF8String:title] : @"";
     NSString *nsKey = keyEquiv ? [NSString stringWithUTF8String:keyEquiv] : @"";
     runOnMainSync(^{
-        NSMenu *parent = gDelegate.menuStack.lastObject ?: gDelegate.popupMenu;
-        NSMenuItem *holder = [[NSMenuItem alloc] initWithTitle:nsTitle action:nil keyEquivalent:nsKey];
-        holder.keyEquivalentModifierMask = 0;
-        NSMenu *sub = [[NSMenu alloc] initWithTitle:nsTitle];
-        [sub setAutoenablesItems:NO];
-        [parent addItem:holder];
-        [parent setSubmenu:sub forItem:holder];
-        [gDelegate.menuStack addObject:sub];
+        NSMutableArray<UCPopupEntry *> *parent = gDelegate.entryBuildStack.lastObject ?: gDelegate.rootEntries;
+        UCPopupEntry *e = [[UCPopupEntry alloc] init];
+        e.title = nsTitle;
+        e.keyEquiv = nsKey;
+        e.enabled = YES;
+        e.children = [NSMutableArray array];
+        [parent addObject:e];
+        [gDelegate.entryBuildStack addObject:e.children];
     });
 }
 
 void uc_popup_end_submenu(void) {
     runOnMainSync(^{
-        if (gDelegate.menuStack.count > 1) {
-            [gDelegate.menuStack removeLastObject];
+        if (gDelegate.entryBuildStack.count > 1) {
+            [gDelegate.entryBuildStack removeLastObject];
         }
     });
 }
 
 void uc_popup_show(void) {
     runOnMainAsync(^{
-        gDelegate.previousApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        [gDelegate dismissAllPopupsAndRestoreFocus:NO];
+
+        pid_t selfPID = [[NSProcessInfo processInfo] processIdentifier];
+        NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        if (front && front.processIdentifier != selfPID) {
+            gDelegate.lastExternalApp = front;
+        }
+
+        [NSApp activateIgnoringOtherApps:YES];
+
         NSPoint loc = [NSEvent mouseLocation];
-        [gDelegate.popupMenu popUpMenuPositioningItem:nil atLocation:loc inView:nil];
+        UCPopupPanel *rootPanel = [gDelegate createPanelWithEntries:gDelegate.rootEntries
+                                                              level:0
+                                                             anchor:loc
+                                                         parentRect:NSZeroRect];
+        [gDelegate.panelStack addObject:rootPanel];
+        [rootPanel makeKeyAndOrderFront:nil];
+
+        gDelegate.globalClickMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown)
+                                                                              handler:^(NSEvent *ev) {
+            (void)ev;
+            NSPoint scrPt = [NSEvent mouseLocation];
+            for (UCPopupPanel *p in gDelegate.panelStack) {
+                if (NSPointInRect(scrPt, p.frame)) {
+                    return;
+                }
+            }
+            [gDelegate dismissAllPopupsAndRestoreFocus:NO];
+        }];
     });
 }
 
 void uc_send_paste(void) {
     runOnMainAsync(^{
-        if (gDelegate.previousApp && !gDelegate.previousApp.terminated) {
-            [gDelegate.previousApp activateWithOptions:0];
+        NSRunningApplication *target = gDelegate.lastExternalApp;
+        if (target && !target.terminated) {
+            [target activateWithOptions:NSApplicationActivateIgnoringOtherApps];
         }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(70 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+            for (int i = 0; i < 12; i++) {
+                if (!target || target.terminated || target.isActive) {
+                    break;
+                }
+                usleep(20000);
+            }
+            usleep(45000);
+
             if (!AXIsProcessTrusted()) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (!gDelegate.axPromptedOnce) {
+                        gDelegate.axPromptedOnce = YES;
+                        NSDictionary *opts = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
+                        AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)opts);
+                    }
+                });
                 return;
             }
+
             CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
             if (!src) return;
-            CGEventRef down = CGEventCreateKeyboardEvent(src, (CGKeyCode)kVK_ANSI_V, true);
-            CGEventRef up = CGEventCreateKeyboardEvent(src, (CGKeyCode)kVK_ANSI_V, false);
-            CGEventSetFlags(down, kCGEventFlagMaskCommand);
-            CGEventSetFlags(up, kCGEventFlagMaskCommand);
-            CGEventPost(kCGHIDEventTap, down);
-            CGEventPost(kCGHIDEventTap, up);
-            CFRelease(down);
-            CFRelease(up);
+
+            CGEventRef cmdDown = CGEventCreateKeyboardEvent(src, (CGKeyCode)kVK_Command, true);
+            CGEventRef vDown = CGEventCreateKeyboardEvent(src, (CGKeyCode)kVK_ANSI_V, true);
+            CGEventRef vUp = CGEventCreateKeyboardEvent(src, (CGKeyCode)kVK_ANSI_V, false);
+            CGEventRef cmdUp = CGEventCreateKeyboardEvent(src, (CGKeyCode)kVK_Command, false);
+
+            CGEventSetFlags(cmdDown, kCGEventFlagMaskCommand);
+            CGEventSetFlags(vDown, kCGEventFlagMaskCommand);
+            CGEventSetFlags(vUp, kCGEventFlagMaskCommand);
+            CGEventSetFlags(cmdUp, 0);
+
+            CGEventPost(kCGHIDEventTap, cmdDown);
+            CGEventPost(kCGHIDEventTap, vDown);
+            usleep(18000);
+            CGEventPost(kCGHIDEventTap, vUp);
+            CGEventPost(kCGHIDEventTap, cmdUp);
+
+            CFRelease(cmdDown);
+            CFRelease(vDown);
+            CFRelease(vUp);
+            CFRelease(cmdUp);
             CFRelease(src);
         });
     });

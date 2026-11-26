@@ -330,13 +330,17 @@ func (p *windowsPlatform) sendCtrlVOnUIThread() {
 	}
 	time.Sleep(60 * time.Millisecond)
 
-	inputs := [4]winInput{
+	downs := [2]winInput{
 		{Type: inputKeyboard, Vk: vkControl},
 		{Type: inputKeyboard, Vk: vkV},
+	}
+	ups := [2]winInput{
 		{Type: inputKeyboard, Vk: vkV, Flags: keyeventfKeyup},
 		{Type: inputKeyboard, Vk: vkControl, Flags: keyeventfKeyup},
 	}
-	procSendInput.Call(4, uintptr(unsafe.Pointer(&inputs[0])), unsafe.Sizeof(inputs[0]))
+	procSendInput.Call(2, uintptr(unsafe.Pointer(&downs[0])), unsafe.Sizeof(downs[0]))
+	time.Sleep(15 * time.Millisecond)
+	procSendInput.Call(2, uintptr(unsafe.Pointer(&ups[0])), unsafe.Sizeof(ups[0]))
 }
 
 func (p *windowsPlatform) OpenViewer(url string) {

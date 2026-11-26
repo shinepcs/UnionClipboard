@@ -536,6 +536,9 @@ func (a *App) SelectHistoryItem(id string, paste bool) error {
 		return err
 	}
 	if paste && cfg.AutoPaste {
+		if !a.plat.HasAccessibilityPermission() {
+			a.uiSrv.BroadcastEvent("toast", "클립보드에 복사되었습니다. 자동 붙여넣기를 위해 macOS 손쉬운 사용 권한을 허용해 주세요.")
+		}
 		a.plat.SendPaste()
 	}
 	return nil
@@ -743,6 +746,9 @@ func (a *App) SelectTemplate(id string, paste bool) error {
 		return err
 	}
 	if paste && cfg.AutoPaste {
+		if !a.plat.HasAccessibilityPermission() {
+			a.uiSrv.BroadcastEvent("toast", "클립보드에 복사되었습니다. 자동 붙여넣기를 위해 macOS 손쉬운 사용 권한을 허용해 주세요.")
+		}
 		a.plat.SendPaste()
 	}
 	return nil
