@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,8 @@ import (
 	"unionclip/internal/security"
 	"unionclip/internal/store"
 )
+
+var ErrPeerUnpaired = errors.New("remote peer rejected certificate (unpaired)")
 
 // PairWithRemote performs channel-bound 6-digit PIN pairing over TLS 1.3 and saves the peer.
 func (m *Manager) PairWithRemote(ctx context.Context, addr, pin string) (model.Peer, error) {
@@ -128,7 +131,6 @@ func (m *Manager) PairWithRemote(ctx context.Context, addr, pin string) (model.P
 		OS:              confResp.ServerInfo.OS,
 		CertFingerprint: serverFP,
 		LastAddr:        addr,
-		ManualAddr:      addr,
 		PairedAt:        now,
 		LastSeenAt:      now,
 	}
@@ -151,11 +153,18 @@ func (m *Manager) newPeerHTTPClient(peer model.Peer, timeout time.Duration) *htt
 
 func (m *Manager) dialPeerWS(ctx context.Context, peer model.Peer, addr string) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
+		NetDialContext: (&net.Dialer{
+			Timeout:   8 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}).DialContext,
 		TLSClientConfig:  security.ClientTLSConfig(m.cert, peer.CertFingerprint),
 		HandshakeTimeout: 8 * time.Second,
 	}
 	wsURL := fmt.Sprintf("wss://%s/api/v1/sync/stream?port=%d", addr, m.ListenPort())
-	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
+	conn, resp, err := dialer.DialContext(ctx, wsURL, nil)
+	if err != nil && resp != nil && resp.StatusCode == http.StatusForbidden {
+		return nil, ErrPeerUnpaired
+	}
 	return conn, err
 }
 

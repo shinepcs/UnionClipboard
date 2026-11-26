@@ -52,9 +52,11 @@ func (p *darwinPlatform) RegisterHotkey(spec string) error {
 	if err != nil {
 		return err
 	}
-	ok := C.uc_register_hotkey(C.bool(hk.Ctrl), C.bool(hk.Alt), C.bool(hk.Shift), C.bool(hk.Cmd), C.uint8_t(hk.Key))
+	ck := C.CString(hk.Key)
+	defer C.free(unsafe.Pointer(ck))
+	ok := C.uc_register_hotkey(C.bool(hk.Ctrl), C.bool(hk.Alt), C.bool(hk.Shift), C.bool(hk.Cmd), ck)
 	if !ok {
-		return fmt.Errorf("failed to register macOS hotkey %q", spec)
+		return fmt.Errorf("macOS 단축키 %q 등록에 실패했습니다 (다른 앱과 충돌할 수 있습니다)", spec)
 	}
 	return nil
 }
@@ -123,7 +125,7 @@ func (p *darwinPlatform) ShowPopupMenu(menu PopupMenuModel) {
 		addMenuItem(0, "(클립보드 히스토리가 비어 있습니다)", nil, "", false)
 	} else {
 		for idx, it := range menu.History {
-			key := keyEquivForIndex(idx)
+			key := HistoryShortcutKey(idx)
 			itemID := it.ID
 			tag := addAction(func() {
 				if cb.OnMenuSelectItem != nil {
@@ -132,41 +134,64 @@ func (p *darwinPlatform) ShowPopupMenu(menu PopupMenuModel) {
 			})
 			prefix := ""
 			if key != "" {
-				prefix = strings.ToUpper(key) + "  "
+				prefix = key + "  "
 			}
-			addMenuItem(tag, prefix+it.Label, it.ThumbPNG, key, true)
+			addMenuItem(tag, prefix+it.Label, it.ThumbPNG, strings.ToLower(key), true)
 		}
 	}
 
 	if len(menu.Templates) > 0 || len(menu.TemplateFolders) > 0 {
 		C.uc_popup_add_separator()
-		cSub := C.CString("템플릿")
-		C.uc_popup_begin_submenu(cSub)
+		cSub := C.CString("T  템플릿")
+		cSubKey := C.CString("t")
+		C.uc_popup_begin_submenu(cSub, cSubKey)
 		C.free(unsafe.Pointer(cSub))
+		C.free(unsafe.Pointer(cSubKey))
 
+		subIdx := 0
 		for _, f := range menu.TemplateFolders {
-			cf := C.CString(f.Title)
-			C.uc_popup_begin_submenu(cf)
+			fk := SubmenuShortcutKey(subIdx)
+			subIdx++
+			fTitle := f.Title
+			if fk != "" {
+				fTitle = fk + "  " + f.Title
+			}
+			cf := C.CString(fTitle)
+			cfKey := C.CString(strings.ToLower(fk))
+			C.uc_popup_begin_submenu(cf, cfKey)
 			C.free(unsafe.Pointer(cf))
-			for _, it := range f.Items {
+			C.free(unsafe.Pointer(cfKey))
+
+			for i, it := range f.Items {
+				ik := SubmenuShortcutKey(i)
 				tid := it.ID
 				tag := addAction(func() {
 					if cb.OnMenuSelectTmpl != nil {
 						cb.OnMenuSelectTmpl(tid)
 					}
 				})
-				addMenuItem(tag, it.Label, it.ThumbPNG, "", true)
+				lbl := it.Label
+				if ik != "" {
+					lbl = ik + "  " + lbl
+				}
+				addMenuItem(tag, lbl, it.ThumbPNG, strings.ToLower(ik), true)
 			}
 			C.uc_popup_end_submenu()
 		}
 		for _, it := range menu.Templates {
+			tk := SubmenuShortcutKey(subIdx)
+			subIdx++
 			tid := it.ID
 			tag := addAction(func() {
 				if cb.OnMenuSelectTmpl != nil {
 					cb.OnMenuSelectTmpl(tid)
 				}
 			})
-			addMenuItem(tag, it.Label, it.ThumbPNG, "", true)
+			lbl := it.Label
+			if tk != "" {
+				lbl = tk + "  " + lbl
+			}
+			addMenuItem(tag, lbl, it.ThumbPNG, strings.ToLower(tk), true)
 		}
 		C.uc_popup_end_submenu()
 	}
@@ -189,19 +214,6 @@ func (p *darwinPlatform) ShowPopupMenu(menu PopupMenuModel) {
 	}), "뷰어 · 설정 열기...", nil, "", true)
 
 	C.uc_popup_show()
-}
-
-func keyEquivForIndex(idx int) string {
-	if idx < 9 {
-		return fmt.Sprintf("%d", idx+1)
-	}
-	if idx == 9 {
-		return "0"
-	}
-	if idx < 36 {
-		return string(rune('a' + (idx - 10)))
-	}
-	return ""
 }
 
 func (p *darwinPlatform) SendPaste() {

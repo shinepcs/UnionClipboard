@@ -83,6 +83,7 @@ func New(dataDir string, portOverride int) (*App, error) {
 		OnRemoteItemDeleted: a.onRemoteItemDeleted,
 		OnTemplatesChanged:  a.onTemplatesChanged,
 		OnPeersChanged:      a.onPeersChanged,
+		OnPeerUnpaired:      a.onPeerUnpaired,
 		OnImageBlobReady:    a.onImageBlobReady,
 	})
 
@@ -359,6 +360,14 @@ func (a *App) onTemplatesChanged() {
 func (a *App) onPeersChanged() {
 	a.refreshTray()
 	a.uiSrv.BroadcastEvent("peers_changed", nil)
+}
+
+func (a *App) onPeerUnpaired(peer model.Peer) {
+	a.refreshTray()
+	a.uiSrv.BroadcastEvent("peers_changed", nil)
+	msg := fmt.Sprintf("%s 기기가 연결을 해제했습니다.", peer.DeviceName)
+	a.uiSrv.BroadcastEvent("toast", msg)
+	a.plat.ShowNotification("UnionClipboard", msg)
 }
 
 func (a *App) showPopupMenu() {
@@ -759,7 +768,7 @@ func (a *App) UpdatePeerAddr(id, addr string) error {
 }
 
 func (a *App) RemovePeer(id string) error {
-	if err := a.store.DeletePeer(id); err != nil {
+	if err := a.syncMgr.UnpairPeer(id); err != nil {
 		return err
 	}
 	a.refreshTray()
@@ -768,10 +777,26 @@ func (a *App) RemovePeer(id string) error {
 }
 
 func (a *App) UpdateConfig(next model.AppConfig) (model.AppConfig, error) {
-	a.cfgMu.Lock()
+	hk, err := platform.ParseHotkey(next.Hotkey)
+	if err != nil {
+		return a.getConfig(), err
+	}
+	next.Hotkey = platform.FormatHotkey(hk, runtime.GOOS)
+
+	a.cfgMu.RLock()
 	prevHotkey := a.cfg.Hotkey
-	next.DeviceID = a.cfg.DeviceID
-	next.ListenPort = a.cfg.ListenPort
+	deviceID := a.cfg.DeviceID
+	listenPort := a.cfg.ListenPort
+	a.cfgMu.RUnlock()
+
+	if next.Hotkey != prevHotkey {
+		if err := a.plat.RegisterHotkey(next.Hotkey); err != nil {
+			return a.getConfig(), err
+		}
+	}
+
+	next.DeviceID = deviceID
+	next.ListenPort = listenPort
 	if next.MaxHistory <= 0 {
 		next.MaxHistory = 200
 	}
@@ -781,18 +806,16 @@ func (a *App) UpdateConfig(next model.AppConfig) (model.AppConfig, error) {
 	if next.MaxFileDownloadBytes <= 0 {
 		next.MaxFileDownloadBytes = 2 * 1024 * 1024 * 1024
 	}
+
+	if err := a.store.SaveConfig(next); err != nil {
+		return a.getConfig(), err
+	}
+
+	a.cfgMu.Lock()
 	a.cfg = next
 	a.info.DeviceName = next.DeviceName
 	a.cfgMu.Unlock()
 
-	if err := a.store.SaveConfig(next); err != nil {
-		return next, err
-	}
-	if next.Hotkey != prevHotkey {
-		if err := a.plat.RegisterHotkey(next.Hotkey); err != nil {
-			return next, err
-		}
-	}
 	a.refreshTray()
 	a.uiSrv.BroadcastEvent("config_changed", nil)
 	return next, nil

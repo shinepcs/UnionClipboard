@@ -173,7 +173,7 @@ type AppConfig struct {
 
 // DefaultConfig returns sensible defaults for the current OS.
 func DefaultConfig(deviceID, deviceName string) AppConfig {
-	hotkey := "Alt+C"
+	hotkey := "Alt+V"
 	excluded := []string{
 		"1Password.exe",
 		"Bitwarden.exe",
@@ -181,7 +181,7 @@ func DefaultConfig(deviceID, deviceName string) AppConfig {
 		"KeePass.exe",
 	}
 	if runtime.GOOS == "darwin" {
-		hotkey = "Option+C"
+		hotkey = "Option+V"
 		excluded = []string{
 			"com.1password.1password",
 			"com.agilebits.onepassword7",

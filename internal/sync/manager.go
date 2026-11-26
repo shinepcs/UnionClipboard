@@ -23,13 +23,15 @@ type Callbacks struct {
 	OnRemoteItemDeleted  func(id string)
 	OnTemplatesChanged   func()
 	OnPeersChanged       func()
+	OnPeerUnpaired       func(peer model.Peer)
 	OnImageBlobReady     func(itemID string)
 }
 
 type peerConn struct {
-	peerID string
-	ws     *websocket.Conn
-	mu     sync.Mutex
+	peerID      string
+	ws          *websocket.Conn
+	connectedAt time.Time
+	mu          sync.Mutex
 }
 
 func (pc *peerConn) sendJSON(v any) error {
@@ -94,11 +96,12 @@ func (m *Manager) Pairing() *security.PairingManager {
 func (m *Manager) Start(ctx context.Context, port int) (int, error) {
 	m.rootCtx, m.cancel = context.WithCancel(ctx)
 
+	lc := net.ListenConfig{KeepAlive: 15 * time.Second}
 	addr := net.JoinHostPort(m.bindHost, fmt.Sprintf("%d", port))
-	rawLn, err := net.Listen("tcp", addr)
+	rawLn, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil && port != 0 {
 		// Fall back to ephemeral port if default port is already taken
-		rawLn, err = net.Listen("tcp", net.JoinHostPort(m.bindHost, "0"))
+		rawLn, err = lc.Listen(ctx, "tcp", net.JoinHostPort(m.bindHost, "0"))
 	}
 	if err != nil {
 		return 0, err
@@ -313,6 +316,47 @@ func (m *Manager) dialLoop(ctx context.Context) {
 	}
 }
 
+// UnpairPeer intentionally disconnects from peerID, notifies it if online, and removes it from store.
+func (m *Manager) UnpairPeer(peerID string) error {
+	m.mu.Lock()
+	pc := m.conns[peerID]
+	if pc != nil {
+		delete(m.conns, peerID)
+	}
+	m.mu.Unlock()
+
+	if pc != nil {
+		_ = pc.sendJSON(model.SyncMessage{
+			Type:     "peer_unpair",
+			SenderID: m.info.DeviceID,
+			SentAt:   time.Now().UnixMilli(),
+		})
+		_ = pc.ws.Close()
+	}
+	if err := m.store.DeletePeer(peerID); err != nil {
+		return err
+	}
+	m.notifyPeersChanged()
+	return nil
+}
+
+func (m *Manager) handleRemoteUnpair(peer model.Peer) {
+	m.mu.Lock()
+	pc := m.conns[peer.DeviceID]
+	if pc != nil {
+		delete(m.conns, peer.DeviceID)
+	}
+	m.mu.Unlock()
+	if pc != nil {
+		_ = pc.ws.Close()
+	}
+	_ = m.store.DeletePeer(peer.DeviceID)
+	if m.callbacks.OnPeerUnpaired != nil {
+		m.callbacks.OnPeerUnpaired(peer)
+	}
+	m.notifyPeersChanged()
+}
+
 func (m *Manager) peerDialWorker(ctx context.Context, peerID string, wakeup <-chan struct{}) {
 	backoff := time.Second
 	for {
@@ -320,21 +364,35 @@ func (m *Manager) peerDialWorker(ctx context.Context, peerID string, wakeup <-ch
 			return
 		}
 		if !m.IsPeerOnline(peerID) {
-			peer, addr, err := m.resolvePeerAddr(peerID)
-			// Deterministic tie-breaker: both sides can dial if offline; servePeerConn handles collision cleanly
-			if err == nil && addr != "" {
-				ws, dErr := m.dialPeerWS(ctx, peer, addr)
-				if dErr == nil {
-					backoff = time.Second
-					m.servePeerConn(peer, ws, true)
+			peer, addrs, err := m.resolvePeerCandidateAddrs(peerID)
+			if err == nil && len(addrs) > 0 {
+				var connected bool
+				for _, addr := range addrs {
+					ws, dErr := m.dialPeerWS(ctx, peer, addr)
+					if errors.Is(dErr, ErrPeerUnpaired) {
+						m.handleRemoteUnpair(peer)
+						return
+					}
+					if dErr == nil {
+						_ = m.store.UpdatePeerSeen(peer.DeviceID, addr, time.Now().UnixMilli())
+						backoff = time.Second
+						connected = true
+						m.servePeerConn(peer, ws, true)
+						break
+					}
+				}
+				if connected {
 					continue
 				}
 			}
 		}
 
 		wait := backoff
-		if backoff < 20*time.Second {
+		if backoff < 5*time.Second {
 			backoff *= 2
+			if backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -349,31 +407,55 @@ func (m *Manager) peerDialWorker(ctx context.Context, peerID string, wakeup <-ch
 	}
 }
 
-func (m *Manager) resolvePeerAddr(peerID string) (model.Peer, string, error) {
+func (m *Manager) resolvePeerCandidateAddrs(peerID string) (model.Peer, []string, error) {
 	peer, err := m.store.GetPeer(peerID)
 	if err != nil {
-		return model.Peer{}, "", err
-	}
-	if peer.ManualAddr != "" {
-		return peer, peer.ManualAddr, nil
+		return model.Peer{}, nil, err
 	}
 	m.mu.RLock()
 	disc := m.discoveredAddr[peerID]
 	m.mu.RUnlock()
-	if disc != "" {
-		return peer, disc, nil
+
+	seen := make(map[string]struct{})
+	var addrs []string
+	for _, a := range []string{disc, peer.ManualAddr, peer.LastAddr} {
+		if a == "" {
+			continue
+		}
+		if _, ok := seen[a]; ok {
+			continue
+		}
+		seen[a] = struct{}{}
+		addrs = append(addrs, a)
 	}
-	if peer.LastAddr != "" {
-		return peer, peer.LastAddr, nil
+	return peer, addrs, nil
+}
+
+func (m *Manager) resolvePeerAddr(peerID string) (model.Peer, string, error) {
+	peer, addrs, err := m.resolvePeerCandidateAddrs(peerID)
+	if err != nil {
+		return model.Peer{}, "", err
 	}
-	return peer, "", errors.New("no known address for peer")
+	if len(addrs) == 0 {
+		return peer, "", errors.New("no known address for peer")
+	}
+	return peer, addrs[0], nil
 }
 
 func (m *Manager) servePeerConn(peer model.Peer, ws *websocket.Conn, isDialer bool) {
-	pc := &peerConn{peerID: peer.DeviceID, ws: ws}
+	pc := &peerConn{
+		peerID:      peer.DeviceID,
+		ws:          ws,
+		connectedAt: time.Now(),
+	}
 
 	m.mu.Lock()
 	if prev, ok := m.conns[peer.DeviceID]; ok && prev != pc {
+		if time.Since(prev.connectedAt) < 3*time.Second && isDialer != (m.info.DeviceID < peer.DeviceID) {
+			m.mu.Unlock()
+			_ = ws.Close()
+			return
+		}
 		_ = prev.ws.Close()
 	}
 	m.conns[peer.DeviceID] = pc
@@ -388,12 +470,19 @@ func (m *Manager) servePeerConn(peer model.Peer, ws *websocket.Conn, isDialer bo
 		}
 		m.mu.Unlock()
 		m.notifyPeersChanged()
+		if _, err := m.store.GetPeer(peer.DeviceID); err == nil {
+			m.TriggerConnect(peer.DeviceID)
+		}
 	}()
 
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
 	ws.SetPongHandler(func(string) error {
 		_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
 		return nil
+	})
+	ws.SetPingHandler(func(appData string) error {
+		_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
+		return ws.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
 	})
 
 	// Send hello + delta request
@@ -425,13 +514,13 @@ func (m *Manager) servePeerConn(peer model.Peer, ws *websocket.Conn, isDialer bo
 				err := ws.WriteMessage(websocket.PingMessage, nil)
 				pc.mu.Unlock()
 				if err != nil {
+					_ = ws.Close()
 					return
 				}
 			}
 		}
 	}()
 
-	_ = isDialer
 	for {
 		_, data, err := ws.ReadMessage()
 		if err != nil {
@@ -546,6 +635,8 @@ func (m *Manager) handleSyncMessage(peer model.Peer, pc *peerConn, msg model.Syn
 				m.callbacks.OnTemplatesChanged()
 			}
 		}
+	case "peer_unpair":
+		m.handleRemoteUnpair(peer)
 	}
 }
 

@@ -157,7 +157,10 @@ func (p *windowsPlatform) showWinPopupOnUIThread() {
 	} else {
 		for idx, it := range menu.History {
 			itemID := it.ID
-			label := mnemonicPrefix(idx) + it.Label
+			label := it.Label
+			if k := HistoryShortcutKey(idx); k != "" {
+				label = fmt.Sprintf("&%s  %s", k, it.Label)
+			}
 			addItem(hMenu, &pos, label, it.ThumbPNG, false, true, func() {
 				if cb.OnMenuSelectItem != nil {
 					cb.OnMenuSelectItem(itemID)
@@ -170,18 +173,29 @@ func (p *windowsPlatform) showWinPopupOnUIThread() {
 		addSep(hMenu, &pos)
 		hSub, _, _ := procCreatePopupMenu.Call()
 		subPos := uint32(0)
+		subIdx := 0
 		for _, f := range menu.TemplateFolders {
+			fk := SubmenuShortcutKey(subIdx)
+			subIdx++
 			hFolder, _, _ := procCreatePopupMenu.Call()
 			fPos := uint32(0)
-			for _, it := range f.Items {
+			for i, it := range f.Items {
 				tid := it.ID
-				addItem(hFolder, &fPos, it.Label, it.ThumbPNG, false, true, func() {
+				lbl := it.Label
+				if ik := SubmenuShortcutKey(i); ik != "" {
+					lbl = fmt.Sprintf("&%s  %s", ik, it.Label)
+				}
+				addItem(hFolder, &fPos, lbl, it.ThumbPNG, false, true, func() {
 					if cb.OnMenuSelectTmpl != nil {
 						cb.OnMenuSelectTmpl(tid)
 					}
 				})
 			}
-			fPtr, _ := windows.UTF16PtrFromString(f.Title)
+			fTitle := f.Title
+			if fk != "" {
+				fTitle = fmt.Sprintf("&%s  %s", fk, f.Title)
+			}
+			fPtr, _ := windows.UTF16PtrFromString(fTitle)
 			var fMii menuItemInfoW
 			fMii.cbSize = uint32(unsafe.Sizeof(fMii))
 			fMii.fMask = miimString | miimSubMenu
@@ -191,14 +205,20 @@ func (p *windowsPlatform) showWinPopupOnUIThread() {
 			subPos++
 		}
 		for _, it := range menu.Templates {
+			tk := SubmenuShortcutKey(subIdx)
+			subIdx++
 			tid := it.ID
-			addItem(hSub, &subPos, it.Label, it.ThumbPNG, false, true, func() {
+			lbl := it.Label
+			if tk != "" {
+				lbl = fmt.Sprintf("&%s  %s", tk, it.Label)
+			}
+			addItem(hSub, &subPos, lbl, it.ThumbPNG, false, true, func() {
 				if cb.OnMenuSelectTmpl != nil {
 					cb.OnMenuSelectTmpl(tid)
 				}
 			})
 		}
-		tPtr, _ := windows.UTF16PtrFromString("템플릿")
+		tPtr, _ := windows.UTF16PtrFromString("&T  템플릿")
 		var tMii menuItemInfoW
 		tMii.cbSize = uint32(unsafe.Sizeof(tMii))
 		tMii.fMask = miimString | miimSubMenu
@@ -344,19 +364,6 @@ func popupCoordinates(prevHwnd uintptr) (int32, int32) {
 	var pt point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 	return pt.X, pt.Y
-}
-
-func mnemonicPrefix(idx int) string {
-	if idx < 9 {
-		return fmt.Sprintf("&%d  ", idx+1)
-	}
-	if idx == 9 {
-		return "&0  "
-	}
-	if idx < 36 {
-		return fmt.Sprintf("&%c  ", 'A'+(idx-10))
-	}
-	return ""
 }
 
 func pngToHBitmap(pngBytes []byte, w, h int) uintptr {

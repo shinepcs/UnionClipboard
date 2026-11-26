@@ -21,8 +21,22 @@ static void runOnMainAsync(dispatch_block_t block) {
     }
 }
 
-static uint32_t carbonKeyCodeForASCII(uint8_t key) {
-    switch (key) {
+static uint32_t carbonKeyCodeForName(const char *keyName) {
+    if (!keyName || keyName[0] == '\0') return kVK_ANSI_V;
+    if (strcmp(keyName, "Space") == 0 || strcmp(keyName, "SPACE") == 0) return kVK_Space;
+    if (strcmp(keyName, "F1") == 0) return kVK_F1;
+    if (strcmp(keyName, "F2") == 0) return kVK_F2;
+    if (strcmp(keyName, "F3") == 0) return kVK_F3;
+    if (strcmp(keyName, "F4") == 0) return kVK_F4;
+    if (strcmp(keyName, "F5") == 0) return kVK_F5;
+    if (strcmp(keyName, "F6") == 0) return kVK_F6;
+    if (strcmp(keyName, "F7") == 0) return kVK_F7;
+    if (strcmp(keyName, "F8") == 0) return kVK_F8;
+    if (strcmp(keyName, "F9") == 0) return kVK_F9;
+    if (strcmp(keyName, "F10") == 0) return kVK_F10;
+    if (strcmp(keyName, "F11") == 0) return kVK_F11;
+    if (strcmp(keyName, "F12") == 0) return kVK_F12;
+    switch (keyName[0]) {
         case 'A': return kVK_ANSI_A;
         case 'B': return kVK_ANSI_B;
         case 'C': return kVK_ANSI_C;
@@ -59,7 +73,7 @@ static uint32_t carbonKeyCodeForASCII(uint8_t key) {
         case '7': return kVK_ANSI_7;
         case '8': return kVK_ANSI_8;
         case '9': return kVK_ANSI_9;
-        default: return kVK_ANSI_C;
+        default: return kVK_ANSI_V;
     }
 }
 
@@ -101,7 +115,7 @@ static UCAppDelegate *gDelegate = nil;
     [self setupMainMenu];
 
     self.menuStack = [NSMutableArray array];
-    self.hotkeyLabel = @"Option+C";
+    self.hotkeyLabel = @"Option+V";
     self.universal = YES;
 
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
@@ -158,7 +172,7 @@ static UCAppDelegate *gDelegate = nil;
     [menu addItem:statusItem];
     [menu addItem:[NSMenuItem separatorItem]];
 
-    NSString *popupTitle = [NSString stringWithFormat:@"클립보드 히스토리 열기 (%@)", self.hotkeyLabel ?: @"Option+C"];
+    NSString *popupTitle = [NSString stringWithFormat:@"클립보드 히스토리 열기 (%@)", self.hotkeyLabel ?: @"Option+V"];
     NSMenuItem *popItem = [[NSMenuItem alloc] initWithTitle:popupTitle action:@selector(onTrayPopup:) keyEquivalent:@""];
     popItem.target = self;
     [menu addItem:popItem];
@@ -390,7 +404,8 @@ void uc_quit_app(void) {
     });
 }
 
-bool uc_register_hotkey(bool ctrl, bool alt, bool shift, bool cmd, uint8_t asciiKey) {
+bool uc_register_hotkey(bool ctrl, bool alt, bool shift, bool cmd, const char *keyName) {
+    NSString *nsKey = keyName ? [NSString stringWithUTF8String:keyName] : @"V";
     __block bool ok = false;
     runOnMainSync(^{
         if (!gDelegate) return;
@@ -412,9 +427,11 @@ bool uc_register_hotkey(bool ctrl, bool alt, bool shift, bool cmd, uint8_t ascii
 
         EventHotKeyID hkID = {'UCLP', 1};
         EventHotKeyRef hkRef = NULL;
-        OSStatus st = RegisterEventHotKey(carbonKeyCodeForASCII(asciiKey), mods, hkID, GetApplicationEventTarget(), 0, &hkRef);
-        gDelegate.hotKeyRef = hkRef;
-        ok = (st == noErr);
+        OSStatus st = RegisterEventHotKey(carbonKeyCodeForName([nsKey UTF8String]), mods, hkID, GetApplicationEventTarget(), 0, &hkRef);
+        if (st == noErr) {
+            gDelegate.hotKeyRef = hkRef;
+            ok = true;
+        }
     });
     return ok;
 }
@@ -513,11 +530,13 @@ void uc_popup_add_separator(void) {
     });
 }
 
-void uc_popup_begin_submenu(const char *title) {
+void uc_popup_begin_submenu(const char *title, const char *keyEquiv) {
     NSString *nsTitle = title ? [NSString stringWithUTF8String:title] : @"";
+    NSString *nsKey = keyEquiv ? [NSString stringWithUTF8String:keyEquiv] : @"";
     runOnMainSync(^{
         NSMenu *parent = gDelegate.menuStack.lastObject ?: gDelegate.popupMenu;
-        NSMenuItem *holder = [[NSMenuItem alloc] initWithTitle:nsTitle action:nil keyEquivalent:@""];
+        NSMenuItem *holder = [[NSMenuItem alloc] initWithTitle:nsTitle action:nil keyEquivalent:nsKey];
+        holder.keyEquivalentModifierMask = 0;
         NSMenu *sub = [[NSMenu alloc] initWithTitle:nsTitle];
         [sub setAutoenablesItems:NO];
         [parent addItem:holder];
@@ -596,7 +615,7 @@ void uc_open_viewer(const char *url) {
 }
 
 void uc_update_tray(int onlinePeers, int totalPeers, bool universal, bool paused, const char *hotkey) {
-    NSString *hk = hotkey ? [NSString stringWithUTF8String:hotkey] : @"Option+C";
+    NSString *hk = hotkey ? [NSString stringWithUTF8String:hotkey] : @"Option+V";
     runOnMainAsync(^{
         gDelegate.onlinePeers = onlinePeers;
         gDelegate.totalPeers = totalPeers;

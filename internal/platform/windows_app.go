@@ -29,6 +29,7 @@ var (
 	procTranslateMessage          = user32.NewProc("TranslateMessage")
 	procDispatchMessageW          = user32.NewProc("DispatchMessageW")
 	procPostMessageW              = user32.NewProc("PostMessageW")
+	procSendMessageW              = user32.NewProc("SendMessageW")
 	procPostQuitMessage           = user32.NewProc("PostQuitMessage")
 	procRegisterHotKey            = user32.NewProc("RegisterHotKey")
 	procUnregisterHotKey          = user32.NewProc("UnregisterHotKey")
@@ -242,23 +243,29 @@ func (p *windowsPlatform) RegisterHotkey(spec string) error {
 	if err != nil {
 		return err
 	}
+	if windowsVirtualKey(hk.Key) == 0 {
+		return fmt.Errorf("Windows에서 지원하지 않는 키입니다: %s", hk.Key)
+	}
 	p.mu.Lock()
 	p.pendingHK = hk
 	hwnd := p.hwnd
 	p.mu.Unlock()
 	if hwnd != 0 {
-		procPostMessageW.Call(hwnd, wmRegisterHotkey, 0, 0)
+		r, _, _ := procSendMessageW.Call(hwnd, wmRegisterHotkey, 0, 0)
+		if r == 0 {
+			return fmt.Errorf("Windows 단축키 %q 등록에 실패했습니다 (다른 앱과 충돌할 수 있습니다)", spec)
+		}
 	}
 	return nil
 }
 
-func (p *windowsPlatform) applyHotkeyOnUIThread() {
+func (p *windowsPlatform) applyHotkeyOnUIThread() uintptr {
 	p.mu.Lock()
 	hk := p.pendingHK
 	hwnd := p.hwnd
 	p.mu.Unlock()
 	if hwnd == 0 {
-		return
+		return 0
 	}
 	procUnregisterHotKey.Call(hwnd, 1)
 	var mods uint32 = modNoRepeat
@@ -274,7 +281,25 @@ func (p *windowsPlatform) applyHotkeyOnUIThread() {
 	if hk.Cmd {
 		mods |= modWin
 	}
-	procRegisterHotKey.Call(hwnd, 1, uintptr(mods), uintptr(hk.Key))
+	vk := windowsVirtualKey(hk.Key)
+	r, _, _ := procRegisterHotKey.Call(hwnd, 1, uintptr(mods), uintptr(vk))
+	return r
+}
+
+func windowsVirtualKey(key string) uint32 {
+	if len(key) == 1 && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= '0' && key[0] <= '9')) {
+		return uint32(key[0])
+	}
+	if key == "Space" {
+		return 0x20
+	}
+	if len(key) >= 2 && key[0] == 'F' {
+		var n int
+		if _, err := fmt.Sscanf(key[1:], "%d", &n); err == nil && n >= 1 && n <= 12 {
+			return uint32(0x70 + n - 1)
+		}
+	}
+	return 0
 }
 
 func (p *windowsPlatform) ShowPopupMenu(menu PopupMenuModel) {
@@ -439,8 +464,7 @@ func winWndProc(hwnd uintptr, uMsg uint32, wParam, lParam uintptr) uintptr {
 		p.showWinPopupOnUIThread()
 		return 0
 	case wmRegisterHotkey:
-		p.applyHotkeyOnUIThread()
-		return 0
+		return p.applyHotkeyOnUIThread()
 	case wmUpdateTray:
 		p.refreshTrayTip()
 		return 0

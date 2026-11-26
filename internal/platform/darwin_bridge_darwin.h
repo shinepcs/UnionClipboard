@@ -6,7 +6,7 @@
 
 void uc_run_app(void);
 void uc_quit_app(void);
-bool uc_register_hotkey(bool ctrl, bool alt, bool shift, bool cmd, uint8_t asciiKey);
+bool uc_register_hotkey(bool ctrl, bool alt, bool shift, bool cmd, const char *keyName);
 void uc_read_clipboard(void);
 void uc_write_clipboard_text(const char *utf8Text);
 void uc_write_clipboard_png(const void *pngBytes, int len);
@@ -15,7 +15,7 @@ void uc_write_clipboard_files(const char **paths, int count);
 void uc_popup_reset(void);
 void uc_popup_add_item(int tag, const char *title, const void *thumbPNG, int thumbLen, const char *keyEquiv, bool enabled);
 void uc_popup_add_separator(void);
-void uc_popup_begin_submenu(const char *title);
+void uc_popup_begin_submenu(const char *title, const char *keyEquiv);
 void uc_popup_end_submenu(void);
 void uc_popup_show(void);
 

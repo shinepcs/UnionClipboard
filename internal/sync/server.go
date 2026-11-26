@@ -102,7 +102,7 @@ func (m *Manager) handlePairConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ClientFP = security.CertFingerprint(r.TLS.PeerCertificates[0])
-	req.ClientAddr = extractPeerListenAddr(r.RemoteAddr, 0)
+	req.ClientAddr = extractPeerHost(r.RemoteAddr)
 
 	resp, peer, err := m.pairing.ConfirmChallenge(req)
 	if err != nil {
@@ -118,6 +118,7 @@ func (m *Manager) handlePairConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.notifyPeersChanged()
+	m.TriggerConnect(peer.DeviceID)
 	writeJSON(w, http.StatusOK, resp)
 }
 

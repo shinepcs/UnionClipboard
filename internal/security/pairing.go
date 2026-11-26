@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -198,12 +200,22 @@ func (m *PairingManager) ConfirmChallenge(req PairConfirmRequest) (PairConfirmRe
 	m.challenges = make(map[string]*pendingChallenge)
 
 	now := time.Now().UnixMilli()
+	lastAddr := req.ClientAddr
+	if lastAddr != "" {
+		if _, _, splitErr := net.SplitHostPort(lastAddr); splitErr != nil {
+			port := ch.clientPort
+			if port <= 0 {
+				port = 47831
+			}
+			lastAddr = net.JoinHostPort(lastAddr, strconv.Itoa(port))
+		}
+	}
 	peer := model.Peer{
 		DeviceID:        ch.clientID,
 		DeviceName:      ch.clientName,
 		OS:              ch.clientOS,
 		CertFingerprint: ch.clientFP,
-		LastAddr:        req.ClientAddr,
+		LastAddr:        lastAddr,
 		PairedAt:        now,
 		LastSeenAt:      now,
 	}

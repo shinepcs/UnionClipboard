@@ -10,7 +10,7 @@ Share multiple **text snippets, images, and files/folders** seamlessly across yo
 
 ## Key Features
 
-- **Native Quick-Paste Popup Menu (`Option+C` / `Alt+C`)**: Opens a fast, keyboard-accessible history & template menu right at your cursor or text caret. Select any item (`1–9`, `0`, `A–Z`) to restore and auto-paste into the active app.
+- **Native Quick-Paste Popup Menu (`Option+V` / `Alt+V`)**: Opens a fast, keyboard-accessible history & template menu right at your cursor or text caret. Select any history item (`1–9`, `0`, `A–S`, `U–Z`), or press `T` to jump into **Templates** and `1–9`, `0` to pick folders and saved snippets via keyboard.
 - **Text, Images & Files/Folders**:
   - **Text**: Instant UTF-8 sync and inline editing.
   - **Images**: Automatic lossless conversion between macOS (`PNG`/`TIFF`) and Windows (`PNG`/`CF_DIB`), with thumbnails in both the popup menu and viewer.
@@ -20,14 +20,15 @@ Share multiple **text snippets, images, and files/folders** seamlessly across yo
 - **Zero-Server Encrypted P2P**:
   - Automatic LAN discovery via mDNS (`_unionclip._tcp`) plus manual IP / Tailscale address support.
   - Self-signed ECDSA P-256 device certificates, **TLS 1.3 mutual authentication (mTLS)** with certificate fingerprint pinning, and **6-digit PIN channel-bound pairing**.
+  - **Persistent Auto-Reconnect**: Once paired, devices stay connected and automatically reconnect across sleep, Wi-Fi/DHCP changes, or restarts until intentionally unpaired.
 - **Privacy Safeguards**: Automatically skips concealed/transient clipboard entries and foreground password managers (1Password, Bitwarden, KeePassXC, Keychain Access), plus one-click capture pause.
 
 ---
 
 ## Screenshots
 
-### Quick-Paste Popup Menu (`Option+C` / `Alt+C`)
-Press `Option+C` (macOS) or `Alt+C` (Windows) in any app to open the clipboard history & template tree right at your cursor/caret:
+### Quick-Paste Popup Menu (`Option+V` / `Alt+V`)
+Press `Option+V` (macOS) or `Alt+V` (Windows) in any app to open the clipboard history & template tree right at your cursor/caret:
 
 ![Quick-Paste Popup Menu](docs/screenshots/popup-menu.png)
 
@@ -100,11 +101,12 @@ make build
 
 | Action | macOS | Windows |
 | :--- | :--- | :--- |
-| Open Quick-Paste Popup Menu | `Option + C` | `Alt + C` |
-| Quick Select Item in Popup | `1–9`, `0`, `A–Z` | `1–9`, `0`, `A–Z` |
+| Open Quick-Paste Popup Menu | `Option + V` | `Alt + V` |
+| Quick Select History Item | `1–9`, `0`, `A–S`, `U–Z` | `1–9`, `0`, `A–S`, `U–Z` |
+| Open Templates → Pick Item | `T` → `1–9`, `0` | `T` → `1–9`, `0` |
 | Close Viewer Window (Keep in Tray) | `Cmd + W` | `Alt + F4` |
 
-Shortcuts can be customized in the **Settings** tab (e.g., `Ctrl+Shift+V`).
+Shortcuts can be customized directly via the **Record Shortcut** button in the **Settings** tab.
 
 ---
 

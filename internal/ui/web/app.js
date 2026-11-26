@@ -530,11 +530,75 @@ async function saveQuickToggle() {
     universal_clipboard: document.getElementById("quick-universal").checked,
     paused: document.getElementById("quick-paused").checked,
   };
-  await api("/api/config", { method: "PUT", body: JSON.stringify(next) });
-  await loadState();
+  try {
+    await api("/api/config", { method: "PUT", body: JSON.stringify(next) });
+    await loadState();
+  } catch (e) {
+    toast("설정 변경 실패: " + e.message);
+  }
 }
 document.getElementById("quick-universal").onchange = saveQuickToggle;
 document.getElementById("quick-paused").onchange = saveQuickToggle;
+
+let recordingHotkey = false;
+const recBtn = document.getElementById("btn-record-hotkey");
+const hotkeyInput = document.getElementById("cfg-hotkey");
+
+function stopHotkeyRecording() {
+  recordingHotkey = false;
+  recBtn.textContent = "단축키 녹화";
+  recBtn.classList.remove("primary");
+}
+
+function keyNameFromEvent(e) {
+  const code = e.code || "";
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/.test(code)) return code.slice(6);
+  if (code === "Space") return "Space";
+  if (/^F([1-9]|1[0-2])$/.test(code)) return code;
+  return "";
+}
+
+recBtn.onclick = () => {
+  if (recordingHotkey) {
+    stopHotkeyRecording();
+    return;
+  }
+  recordingHotkey = true;
+  recBtn.textContent = "새 단축키를 누르세요...";
+  recBtn.classList.add("primary");
+};
+
+window.addEventListener("keydown", (e) => {
+  if (!recordingHotkey) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === "Escape") {
+    stopHotkeyRecording();
+    return;
+  }
+  const key = keyNameFromEvent(e);
+  if (!key) return;
+  const mods = [];
+  const isMac = state && state.os === "darwin";
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push(isMac ? "Option" : "Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push(isMac ? "Cmd" : "Win");
+  if (!mods.length) {
+    toast("보조키(Option/Alt/Ctrl/Shift/Cmd)와 함께 눌러주세요.");
+    return;
+  }
+  hotkeyInput.value = [...mods, key].join("+");
+  stopHotkeyRecording();
+}, true);
+
+document.getElementById("btn-reset-hotkey").onclick = () => {
+  stopHotkeyRecording();
+  const isMac = state && state.os === "darwin";
+  hotkeyInput.value = isMac ? "Option+V" : "Alt+V";
+};
 
 document.getElementById("btn-save-config").onclick = async () => {
   if (!state) return;
@@ -548,9 +612,13 @@ document.getElementById("btn-save-config").onclick = async () => {
     auto_paste: document.getElementById("cfg-autopaste").checked,
     excluded_apps: excluded,
   };
-  await api("/api/config", { method: "PUT", body: JSON.stringify(next) });
-  toast("설정을 저장했습니다.");
-  await loadState();
+  try {
+    await api("/api/config", { method: "PUT", body: JSON.stringify(next) });
+    toast("설정을 저장했습니다.");
+    await loadState();
+  } catch (e) {
+    toast("설정 저장 실패: " + e.message);
+  }
 };
 
 document.getElementById("btn-clear-cache").onclick = async () => {

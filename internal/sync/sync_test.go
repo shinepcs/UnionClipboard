@@ -281,3 +281,67 @@ func TestTwoNodePairingSyncAndOnDemandFiles(t *testing.T) {
 		return len(folders) == 1 && len(tmpls) == 1 && tmpls[0].TextContent == "Best regards"
 	}, "template folder and item synced to nodeB")
 }
+
+func TestPersistentReconnectAndIntentionalUnpair(t *testing.T) {
+	nodeA := newTestNode(t, "dev-mac", "MacBook", "darwin")
+	nodeB := newTestNode(t, "dev-win", "WindowsPC", "windows")
+
+	pin, _, err := nodeA.mgr.Pairing().StartSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nodeB.mgr.PairWithRemote(context.Background(), nodeA.addr, pin); err != nil {
+		t.Fatalf("PairWithRemote: %v", err)
+	}
+
+	waitUntil(t, 5*time.Second, func() bool {
+		return nodeB.mgr.IsPeerOnline("dev-mac") && nodeA.mgr.IsPeerOnline("dev-win")
+	}, "initial connection online")
+
+	// Server side must also persist client's dialable LastAddr
+	pWin, err := nodeA.st.GetPeer("dev-win")
+	if err != nil || pWin.LastAddr == "" {
+		t.Fatalf("expected server peer LastAddr persisted, got %+v err=%v", pWin, err)
+	}
+
+	// Simulate abrupt socket drop -> must auto-reconnect without re-pairing
+	nodeA.mgr.mu.Lock()
+	if pc := nodeA.mgr.conns["dev-win"]; pc != nil {
+		_ = pc.ws.Close()
+	}
+	nodeA.mgr.mu.Unlock()
+
+	waitUntil(t, 6*time.Second, func() bool {
+		return nodeB.mgr.IsPeerOnline("dev-mac") && nodeA.mgr.IsPeerOnline("dev-win")
+	}, "automatic reconnect after socket drop")
+
+	// Intentional unpair on A must unpair both sides and stop reconnecting
+	unpairedNotified := make(chan string, 1)
+	nodeB.mgr.mu.Lock()
+	nodeB.mgr.callbacks.OnPeerUnpaired = func(p model.Peer) {
+		select {
+		case unpairedNotified <- p.DeviceID:
+		default:
+		}
+	}
+	nodeB.mgr.mu.Unlock()
+
+	if err := nodeA.mgr.UnpairPeer("dev-win"); err != nil {
+		t.Fatalf("UnpairPeer: %v", err)
+	}
+
+	waitUntil(t, 5*time.Second, func() bool {
+		peersA, _ := nodeA.st.ListPeers()
+		peersB, _ := nodeB.st.ListPeers()
+		return len(peersA) == 0 && len(peersB) == 0 && !nodeB.mgr.IsPeerOnline("dev-mac")
+	}, "both peers cleared after intentional unpair")
+
+	select {
+	case id := <-unpairedNotified:
+		if id != "dev-mac" {
+			t.Fatalf("expected OnPeerUnpaired dev-mac, got %s", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected OnPeerUnpaired callback on nodeB")
+	}
+}
