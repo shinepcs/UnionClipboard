@@ -26,6 +26,13 @@
 
 ## 界面截图
 
+### 快捷粘贴弹出菜单 (`Option+C` / `Alt+C`)
+在任意应用中按下 `Option+C`（macOS）或 `Alt+C`（Windows），即可在鼠标或输入光标处呼出剪贴板历史记录与模板文件夹树:
+
+![快捷粘贴弹出菜单](docs/screenshots/popup-menu.png)
+
+### 管理视图界面
+
 | 剪贴板历史与预览 | 模板文件夹树 |
 | :---: | :---: |
 | ![历史界面](docs/screenshots/history.png) | ![模板界面](docs/screenshots/templates.png) |

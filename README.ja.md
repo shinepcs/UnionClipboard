@@ -24,6 +24,13 @@
 
 ## スクリーンショット
 
+### クイックペースト・ポップアップメニュー (`Option+C` / `Alt+C`)
+どのアプリで作業していても `Option+C`（macOS）または `Alt+C`（Windows）を押すと、カーソル／キャレット位置にクリップボード履歴とテンプレートツリーが即座に表示されます:
+
+![クイックペースト・ポップアップメニュー](docs/screenshots/popup-menu.png)
+
+### 管理ビューア
+
 | クリップボード履歴・プレビュー | テンプレートフォルダツリー |
 | :---: | :---: |
 | ![履歴画面](docs/screenshots/history.png) | ![テンプレート画面](docs/screenshots/templates.png) |

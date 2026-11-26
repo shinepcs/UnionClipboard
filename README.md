@@ -26,6 +26,13 @@ Share multiple **text snippets, images, and files/folders** seamlessly across yo
 
 ## Screenshots
 
+### Quick-Paste Popup Menu (`Option+C` / `Alt+C`)
+Press `Option+C` (macOS) or `Alt+C` (Windows) in any app to open the clipboard history & template tree right at your cursor/caret:
+
+![Quick-Paste Popup Menu](docs/screenshots/popup-menu.png)
+
+### Management Viewer
+
 | Clipboard History & Preview | Template Folder Tree |
 | :---: | :---: |
 | ![History View](docs/screenshots/history.png) | ![Templates View](docs/screenshots/templates.png) |

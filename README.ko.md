@@ -24,6 +24,13 @@
 
 ## 스크린샷
 
+### 빠른 붙여넣기 팝업 메뉴 (`Option+C` / `Alt+C`)
+작업 중인 앱 어디서든 `Option+C` (macOS) 또는 `Alt+C` (Windows)를 누르면 커서/캐럿 위치에 클립보드 히스토리와 템플릿 폴더 트리가 즉시 열립니다:
+
+![빠른 붙여넣기 팝업 메뉴](docs/screenshots/popup-menu.png)
+
+### 관리 뷰어 창
+
 | 클립보드 히스토리 및 미리보기 | 템플릿 폴더 트리 |
 | :---: | :---: |
 | ![히스토리 화면](docs/screenshots/history.png) | ![템플릿 화면](docs/screenshots/templates.png) |
