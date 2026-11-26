@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Run unit and integration tests
+        run: go test -race -count=1 ./...
+
+      - name: Build macOS and Windows binaries
+        run: make build
+
+      - name: Verify build outputs
+        run: file dist/UnionClipboard.app/Contents/MacOS/UnionClipboard dist/UnionClipboard.exe

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UnionClipboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">UC</div>
+        <div>
+          <div class="brand-title">UnionClipboard</div>
+          <div id="device-subtitle" class="brand-sub">로딩 중...</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-btn active" data-tab="history">히스토리</button>
+        <button class="nav-btn" data-tab="templates">템플릿</button>
+        <button class="nav-btn" data-tab="peers">연결된 기기 <span id="peer-badge" class="badge">0</span></button>
+        <button class="nav-btn" data-tab="settings">설정</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <label class="toggle-row">
+          <span>유니버설 클립보드</span>
+          <input type="checkbox" id="quick-universal" />
+        </label>
+        <label class="toggle-row">
+          <span>캡처 일시중지</span>
+          <input type="checkbox" id="quick-paused" />
+        </label>
+        <div id="hotkey-hint" class="hint-pill">단축키: Option+C</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- HISTORY TAB -->
+      <section id="tab-history" class="tab-panel active">
+        <header class="toolbar">
+          <input id="history-search" type="search" placeholder="텍스트, 파일명 검색..." />
+          <select id="history-kind">
+            <option value="">모든 타입</option>
+            <option value="text">글자</option>
+            <option value="image">이미지</option>
+            <option value="files">파일/폴더</option>
+          </select>
+          <select id="history-os">
+            <option value="">모든 기기</option>
+            <option value="darwin">Mac</option>
+            <option value="windows">Windows</option>
+          </select>
+          <button id="btn-clear-history" class="btn danger-ghost">비우기</button>
+        </header>
+
+        <div class="split">
+          <div id="history-list" class="item-list"></div>
+          <div id="history-detail" class="detail-pane">
+            <div class="empty-state">항목을 선택하면 미리보기와 편집이 가능합니다.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TEMPLATES TAB -->
+      <section id="tab-templates" class="tab-panel">
+        <header class="toolbar">
+          <button id="btn-new-folder" class="btn">+ 새 폴더</button>
+          <button id="btn-new-template" class="btn primary">+ 새 템플릿</button>
+        </header>
+        <div class="split templates-split">
+          <div class="folder-pane">
+            <div class="pane-header">폴더 트리</div>
+            <div id="folder-tree"></div>
+          </div>
+          <div class="template-list-pane">
+            <div id="template-list" class="item-list"></div>
+          </div>
+          <div id="template-detail" class="detail-pane">
+            <div class="empty-state">템플릿을 선택하거나 새로 만드세요.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PEERS TAB -->
+      <section id="tab-peers" class="tab-panel">
+        <div class="cards-grid">
+          <div class="card">
+            <h3>이 기기로 새 기기 연결받기</h3>
+            <p class="muted">다른 Mac이나 Windows에서 아래 IP와 6자리 PIN을 입력해 페어링하세요.</p>
+            <div id="pin-box" class="pin-box hidden">
+              <div id="pin-code" class="pin-code">------</div>
+              <div id="pin-timer" class="muted"></div>
+            </div>
+            <button id="btn-start-pin" class="btn primary">6자리 PIN 생성</button>
+          </div>
+
+          <div class="card">
+            <h3>수동 IP / Tailscale로 연결</h3>
+            <p class="muted">예: 192.168.0.15:47831 또는 Tailscale IP</p>
+            <div class="form-row">
+              <input id="pair-addr" type="text" placeholder="상대 기기 IP:포트" />
+              <input id="pair-pin" type="text" maxlength="6" placeholder="6자리 PIN" />
+              <button id="btn-connect-pin" class="btn primary">연결</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-block">
+          <h3>LAN 자동 탐지 기기</h3>
+          <div id="discovered-list" class="peer-list"></div>
+        </div>
+
+        <div class="section-block">
+          <h3>페어링된 기기</h3>
+          <div id="peers-list" class="peer-list"></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS TAB -->
+      <section id="tab-settings" class="tab-panel">
+        <div class="settings-form">
+          <div class="card">
+            <h3>기본 및 단축키</h3>
+            <label class="field">
+              <span>기기 이름</span>
+              <input id="cfg-name" type="text" />
+            </label>
+            <label class="field">
+              <span>클립보드 히스토리 단축키 (예: Option+C, Alt+C, Ctrl+Shift+V)</span>
+              <input id="cfg-hotkey" type="text" />
+            </label>
+            <label class="field">
+              <span>최대 히스토리 보관 개수</span>
+              <input id="cfg-max-history" type="number" min="10" max="2000" />
+            </label>
+            <label class="field-check">
+              <input id="cfg-universal" type="checkbox" />
+              <span>유니버설 클립보드 (복사한 글자·이미지를 연결된 기기 클립보드에 즉시 반영)</span>
+            </label>
+            <label class="field-check">
+              <input id="cfg-autopaste" type="checkbox" />
+              <span>팝업 메뉴 선택 시 현재 앱에 자동 붙여넣기 (Cmd+V / Ctrl+V)</span>
+            </label>
+          </div>
+
+          <div id="mac-ax-card" class="card hidden">
+            <h3>macOS 손쉬운 사용 권한</h3>
+            <p id="ax-status-text" class="muted"></p>
+            <button id="btn-request-ax" class="btn">시스템 설정 열기</button>
+          </div>
+
+          <div class="card">
+            <h3>보안 및 제외 앱</h3>
+            <p class="muted">비밀번호 관리자 등 민감한 앱이 활성화되어 있을 때 클립보드 캡처를 건너뜁니다. (줄바꿈 구분)</p>
+            <textarea id="cfg-excluded" rows="5"></textarea>
+          </div>
+
+          <div class="card">
+            <h3>원격 파일 캐시</h3>
+            <p id="cache-size-text" class="muted">계산 중...</p>
+            <button id="btn-clear-cache" class="btn">수신 파일 캐시 비우기</button>
+          </div>
+
+          <div class="actions-bar">
+            <button id="btn-save-config" class="btn primary">설정 저장</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-area" class="toast-area"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
